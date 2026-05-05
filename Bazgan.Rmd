@@ -1,0 +1,286 @@
+---
+title: "Tree-Based Methods for Predicting Online Shopping Purchases"
+author: "Bazgan"
+date: "2026-05-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+packages <- c(
+  "tidyverse", "caret", "glmnet", "randomForest",
+  "gbm", "pROC", "knitr"
+)
+
+for (p in packages) {
+  if (!require(p, character.only = TRUE)) {
+    install.packages(p, repos = "https://cloud.r-project.org")
+    library(p, character.only = TRUE)
+  }
+}
+
+set.seed(123)
+
+url <- "https://archive.ics.uci.edu/static/public/468/online+shoppers+purchasing+intention+dataset.zip"
+download.file(url, "online_shoppers.zip", mode = "wb")
+unzip("online_shoppers.zip")
+
+data <- read.csv("online_shoppers_intention.csv")
+
+str(data)
+summary(data)
+table(data$Revenue)
+prop.table(table(data$Revenue))
+
+data$Revenue <- as.factor(ifelse(data$Revenue == TRUE, "Purchase", "NoPurchase"))
+data$Weekend <- as.factor(data$Weekend)
+data$Month <- as.factor(data$Month)
+data$VisitorType <- as.factor(data$VisitorType)
+data$OperatingSystems <- as.factor(data$OperatingSystems)
+data$Browser <- as.factor(data$Browser)
+data$Region <- as.factor(data$Region)
+data$TrafficType <- as.factor(data$TrafficType)
+
+set.seed(123)
+train_index <- createDataPartition(data$Revenue, p = 0.70, list = FALSE)
+
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+table(train_data$Revenue)
+table(test_data$Revenue)
+
+x_train <- model.matrix(Revenue ~ ., train_data)[, -1]
+y_train <- train_data$Revenue
+
+x_test <- model.matrix(Revenue ~ ., test_data)[, -1]
+y_test <- test_data$Revenue
+
+set.seed(123)
+lasso_cv <- cv.glmnet(
+  x_train,
+  y_train,
+  family = "binomial",
+  alpha = 1,
+  type.measure = "class"
+)
+
+best_lambda <- lasso_cv$lambda.min
+best_lambda
+
+lasso_pred_prob <- predict(lasso_cv, newx = x_test, s = best_lambda, type = "response")
+lasso_pred <- ifelse(lasso_pred_prob > 0.5, "Purchase", "NoPurchase")
+lasso_pred <- factor(lasso_pred, levels = levels(y_test))
+
+lasso_cm <- confusionMatrix(lasso_pred, y_test, positive = "Purchase")
+lasso_cm
+
+lasso_auc <- auc(y_test, as.numeric(lasso_pred_prob))
+lasso_auc
+
+lasso_coef <- coef(lasso_cv, s = best_lambda)
+lasso_selected <- lasso_coef[lasso_coef[, 1] != 0, , drop = FALSE]
+lasso_selected
+
+p <- ncol(train_data) - 1
+
+set.seed(123)
+bagging_model <- randomForest(
+  Revenue ~ .,
+  data = train_data,
+  mtry = p,
+  ntree = 500,
+  importance = TRUE
+)
+
+bagging_pred <- predict(bagging_model, test_data)
+bagging_prob <- predict(bagging_model, test_data, type = "prob")[, "Purchase"]
+
+bagging_cm <- confusionMatrix(bagging_pred, test_data$Revenue, positive = "Purchase")
+bagging_cm
+
+bagging_auc <- auc(test_data$Revenue, bagging_prob)
+bagging_auc
+
+varImpPlot(bagging_model, main = "Variable Importance Plot: Bagging")
+mtry_values <- c(2, 4, 6, 8, 10)
+
+rf_results <- data.frame()
+
+for (m in mtry_values) {
+  set.seed(123)
+  rf_model <- randomForest(
+    Revenue ~ .,
+    data = train_data,
+    mtry = m,
+    ntree = 500,
+    importance = TRUE
+  )
+  
+  rf_pred <- predict(rf_model, test_data)
+  rf_prob <- predict(rf_model, test_data, type = "prob")[, "Purchase"]
+  
+  cm <- confusionMatrix(rf_pred, test_data$Revenue, positive = "Purchase")
+  auc_value <- auc(test_data$Revenue, rf_prob)
+  
+  rf_results <- rbind(
+    rf_results,
+    data.frame(
+      mtry = m,
+      Accuracy = cm$overall["Accuracy"],
+      Sensitivity = cm$byClass["Sensitivity"],
+      Specificity = cm$byClass["Specificity"],
+      AUC = as.numeric(auc_value)
+    )
+  )
+}
+
+kable(rf_results, caption = "Random Forest Tuning Results")
+best_mtry <- rf_results$mtry[which.max(rf_results$AUC)]
+
+set.seed(123)
+best_rf_model <- randomForest(
+  Revenue ~ .,
+  data = train_data,
+  mtry = best_mtry,
+  ntree = 500,
+  importance = TRUE
+)
+
+rf_pred <- predict(best_rf_model, test_data)
+rf_prob <- predict(best_rf_model, test_data, type = "prob")[, "Purchase"]
+
+rf_cm <- confusionMatrix(rf_pred, test_data$Revenue, positive = "Purchase")
+rf_cm
+
+rf_auc <- auc(test_data$Revenue, rf_prob)
+rf_auc
+
+varImpPlot(best_rf_model, main = "Variable Importance Plot: Random Forest")
+
+boost_train <- train_data
+boost_test <- test_data
+
+boost_train$RevenueNum <- ifelse(boost_train$Revenue == "Purchase", 1, 0)
+boost_test$RevenueNum <- ifelse(boost_test$Revenue == "Purchase", 1, 0)
+
+boost_train$Revenue <- NULL
+boost_test$Revenue <- NULL
+
+boost_grid <- expand.grid(
+  n.trees = c(500, 1000, 1500),
+  interaction.depth = c(1, 2, 3),
+  shrinkage = c(0.01, 0.05, 0.1)
+)
+
+boost_results <- data.frame()
+
+for (i in 1:nrow(boost_grid)) {
+  set.seed(123)
+  
+  boost_model <- gbm(
+    RevenueNum ~ .,
+    data = boost_train,
+    distribution = "bernoulli",
+    n.trees = boost_grid$n.trees[i],
+    interaction.depth = boost_grid$interaction.depth[i],
+    shrinkage = boost_grid$shrinkage[i],
+    n.minobsinnode = 10,
+    verbose = FALSE
+  )
+  
+  boost_prob <- predict(
+    boost_model,
+    newdata = boost_test,
+    n.trees = boost_grid$n.trees[i],
+    type = "response"
+  )
+  
+  boost_pred <- ifelse(boost_prob > 0.5, "Purchase", "NoPurchase")
+  boost_pred <- factor(boost_pred, levels = levels(test_data$Revenue))
+  
+  cm <- confusionMatrix(boost_pred, test_data$Revenue, positive = "Purchase")
+  auc_value <- auc(test_data$Revenue, boost_prob)
+  
+  boost_results <- rbind(
+    boost_results,
+    data.frame(
+      n.trees = boost_grid$n.trees[i],
+      interaction.depth = boost_grid$interaction.depth[i],
+      shrinkage = boost_grid$shrinkage[i],
+      Accuracy = as.numeric(cm$overall["Accuracy"]),
+      Sensitivity = as.numeric(cm$byClass["Sensitivity"]),
+      Specificity = as.numeric(cm$byClass["Specificity"]),
+      AUC = as.numeric(auc_value)
+    )
+  )
+}
+
+kable(boost_results, caption = "Boosting Tuning Results")
+best_boost <- boost_results[which.max(boost_results$AUC), ]
+
+set.seed(123)
+
+best_boost_model <- gbm(
+  RevenueNum ~ .,
+  data = boost_train,
+  distribution = "bernoulli",
+  n.trees = best_boost$n.trees,
+  interaction.depth = best_boost$interaction.depth,
+  shrinkage = best_boost$shrinkage,
+  n.minobsinnode = 10,
+  verbose = FALSE
+)
+
+boost_prob <- predict(
+  best_boost_model,
+  newdata = boost_test,
+  n.trees = best_boost$n.trees,
+  type = "response"
+)
+
+boost_pred <- ifelse(boost_prob > 0.5, "Purchase", "NoPurchase")
+boost_pred <- factor(boost_pred, levels = levels(test_data$Revenue))
+
+boost_cm <- confusionMatrix(boost_pred, test_data$Revenue, positive = "Purchase")
+boost_cm
+
+boost_auc <- auc(test_data$Revenue, boost_prob)
+boost_auc
+
+summary(best_boost_model, main = "Variable Importance Plot: Boosting")
+model_comparison <- data.frame(
+  Model = c("Lasso", "Bagging", "Random Forest", "Boosting"),
+  Accuracy = c(
+    lasso_cm$overall["Accuracy"],
+    bagging_cm$overall["Accuracy"],
+    rf_cm$overall["Accuracy"],
+    boost_cm$overall["Accuracy"]
+  ),
+  Sensitivity = c(
+    lasso_cm$byClass["Sensitivity"],
+    bagging_cm$byClass["Sensitivity"],
+    rf_cm$byClass["Sensitivity"],
+    boost_cm$byClass["Sensitivity"]
+  ),
+  Specificity = c(
+    lasso_cm$byClass["Specificity"],
+    bagging_cm$byClass["Specificity"],
+    rf_cm$byClass["Specificity"],
+    boost_cm$byClass["Specificity"]
+  ),
+  AUC = c(
+    as.numeric(lasso_auc),
+    as.numeric(bagging_auc),
+    as.numeric(rf_auc),
+    as.numeric(boost_auc)
+  )
+)
+
+kable(model_comparison, caption = "Final Model Comparison on Test Set")
+```
+
