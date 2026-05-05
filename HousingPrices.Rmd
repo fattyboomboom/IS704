@@ -1,0 +1,83 @@
+---
+title: "HousingPrices"
+author: "Bazgan"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+housing <- read.csv("train.csv", stringsAsFactors = FALSE)
+head(housing)
+dim(housing)
+names(housing)
+
+housing$Id <- NULL
+
+housing[] <- lapply(housing, function(x) {
+  if (is.character(x)) as.factor(x) else x
+})
+
+for (i in 1:ncol(housing)) {
+  if (is.numeric(housing[[i]])) {
+    housing[[i]][is.na(housing[[i]])] <- median(housing[[i]], na.rm = TRUE)
+  } else {
+    housing[[i]][is.na(housing[[i]])] <- names(sort(table(housing[[i]]), decreasing = TRUE))[1]
+  }
+}
+
+set.seed(123)
+train_index <- sample(1:nrow(housing), 0.7 * nrow(housing))
+
+train_data <- housing[train_index, ]
+test_data <- housing[-train_index, ]
+
+train_data <- droplevels(train_data)
+
+for (col in names(train_data)) {
+  if (is.factor(train_data[[col]])) {
+    test_data[[col]] <- factor(as.character(test_data[[col]]),
+                               levels = levels(train_data[[col]]))
+  }
+}
+
+test_data_lm <- test_data[complete.cases(test_data), ]
+
+lm_model <- lm(SalePrice ~ ., data = train_data)
+
+pred_lm <- predict(lm_model, newdata = test_data_lm)
+
+rmse_lm <- sqrt(mean((pred_lm - test_data_lm$SalePrice)^2))
+rmse_lm
+
+library(glmnet)
+
+x_train <- model.matrix(SalePrice ~ ., data = train_data)[, -1]
+y_train <- train_data$SalePrice
+
+x_test <- model.matrix(SalePrice ~ ., data = test_data_lm)[, -1]
+y_test <- test_data_lm$SalePrice
+
+common_cols <- intersect(colnames(x_train), colnames(x_test))
+x_train <- x_train[, common_cols, drop = FALSE]
+x_test <- x_test[, common_cols, drop = FALSE]
+
+ridge_model <- cv.glmnet(x_train, y_train, alpha = 0)
+
+pred_ridge <- predict(ridge_model, s = ridge_model$lambda.min, newx = x_test)
+
+rmse_ridge <- sqrt(mean((pred_ridge - y_test)^2))
+rmse_ridge
+
+lasso_model <- cv.glmnet(x_train, y_train, alpha = 1)
+
+pred_lasso <- predict(lasso_model, s = lasso_model$lambda.min, newx = x_test)
+
+rmse_lasso <- sqrt(mean((pred_lasso - y_test)^2))
+rmse_lasso
+```
+

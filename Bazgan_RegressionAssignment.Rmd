@@ -1,0 +1,74 @@
+---
+title: "Bazgan_RegressionAssignment"
+author: "Bazgan"
+date: "2026-02-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(car)
+
+df <- read.csv("customer_feedback_satisfaction.csv")
+
+df$Gender <- factor(df$Gender)
+df$Country <- factor(df$Country)
+df$FeedbackScore <- factor(df$FeedbackScore, levels = c("High", "Medium", "Low"))
+df$LoyaltyLevel <- factor(df$LoyaltyLevel, levels = c("Bronze", "Silver", "Gold"))
+
+dim(df)
+colSums(is.na(df))
+str(df)
+
+summary(df$SatisfactionScore)
+mean(df$SatisfactionScore == 100)
+
+hist(df$SatisfactionScore, breaks = 40, main = "Distribution of SatisfactionScore", xlab = "SatisfactionScore")
+
+plot(df$ProductQuality, df$SatisfactionScore, main = "Satisfaction vs ProductQuality",
+     xlab = "ProductQuality", ylab = "SatisfactionScore", pch = 16, cex = 0.5, col = rgb(0,0,0,0.1))
+abline(lm(SatisfactionScore ~ ProductQuality, data = df), lwd = 2)
+
+plot(df$ServiceQuality, df$SatisfactionScore, main = "Satisfaction vs ServiceQuality",
+     xlab = "ServiceQuality", ylab = "SatisfactionScore", pch = 16, cex = 0.5, col = rgb(0,0,0,0.1))
+abline(lm(SatisfactionScore ~ ServiceQuality, data = df), lwd = 2)
+
+boxplot(SatisfactionScore ~ Gender, data = df, main = "Satisfaction by Gender", xlab = "Gender", ylab = "SatisfactionScore")
+boxplot(SatisfactionScore ~ FeedbackScore, data = df, main = "Satisfaction by FeedbackScore", xlab = "FeedbackScore", ylab = "SatisfactionScore")
+boxplot(SatisfactionScore ~ LoyaltyLevel, data = df, main = "Satisfaction by LoyaltyLevel", xlab = "LoyaltyLevel", ylab = "SatisfactionScore")
+boxplot(SatisfactionScore ~ Country, data = df, main = "Satisfaction by Country", xlab = "Country", ylab = "SatisfactionScore", las = 2)
+
+num_cols <- df[, c("Age","Income","ProductQuality","ServiceQuality","PurchaseFrequency","SatisfactionScore")]
+cor(num_cols)
+
+model <- lm(SatisfactionScore ~ Age + Income + ProductQuality + ServiceQuality + PurchaseFrequency +
+              Gender + Country + FeedbackScore + LoyaltyLevel, data = df)
+summary(model)
+coef(model)
+
+vif(model)
+
+par(mfrow = c(2,2))
+plot(model)
+par(mfrow = c(1,1))
+
+set.seed(42)
+n <- nrow(df)
+idx <- sample.int(n, size = floor(0.8 * n))
+train <- df[idx, ]
+test <- df[-idx, ]
+
+m2 <- lm(SatisfactionScore ~ Age + Income + ProductQuality + ServiceQuality + PurchaseFrequency +
+           Gender + Country + FeedbackScore + LoyaltyLevel, data = train)
+pred <- predict(m2, newdata = test)
+
+rmse <- sqrt(mean((pred - test$SatisfactionScore)^2))
+mae <- mean(abs(pred - test$SatisfactionScore))
+r2 <- 1 - sum((test$SatisfactionScore - pred)^2) / sum((test$SatisfactionScore - mean(test$SatisfactionScore))^2)
+
+rmse
+mae
+r2
+```

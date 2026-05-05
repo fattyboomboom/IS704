@@ -1,0 +1,28 @@
+---
+title: "HW1"
+author: "Bazgan"
+date: "2026-01-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ISLR)
+data(Auto)
+head(Auto)
+dim(Auto)
+```
+The Auto dataset contains 7 quantitative variables(mpg, cylinders, displacement, horsepower,weight and year)
+and 2 qualitative variables(origin and name).
+
+```{r}
+advertising<-read.csv("Advertising.csv")
+head(advertising)
+dim(advertising)
+```
+The Advertising datatset contains all quantitative variables. It contains the advertising budgets for
+TV, radio and newspapers and the sales figures.
